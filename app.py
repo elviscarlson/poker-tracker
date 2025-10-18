@@ -139,11 +139,11 @@ if 'is_admin' not in st.session_state:
     st.session_state.is_admin = False
 
 # Huvudapp
-st.set_page_config(page_title="Poker Statistik Tracker", page_icon="🃏", layout="wide")
+st.set_page_config(page_title="Poker Statistik Tracker", page_icon="🍆", layout="wide")
 
 # Inloggning/Registrering
 if st.session_state.user_id is None:
-    st.title("🃏 Poker Statistik Tracker")
+    st.title("🍆 Poker Statistik Tracker")
     
     tab1, tab2 = st.tabs(["Logga in", "Skapa konto"])
     
@@ -185,7 +185,7 @@ else:
     # Inloggad vy
     header_col1, header_col2 = st.columns([6, 1])
     with header_col1:
-        title = f"🃏 Poker Statistik - {st.session_state.username}"
+        title = f"🍆 Poker Statistik - {st.session_state.username}"
         if st.session_state.is_admin:
             title += " 👑"
         st.title(title)
