@@ -5,6 +5,7 @@ import hashlib
 from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
+import os
 
 # Databashantering
 def init_db():
@@ -45,8 +46,9 @@ def create_user(username, password):
     is_admin = 1 if user_count == 0 else 0
     
     try:
+        hashed_pw = hash_password(password)
         c.execute("INSERT INTO users (username, password, is_admin) VALUES (?, ?, ?)",
-                  (username, hash_password(password), is_admin))
+                  (username, hashed_pw, is_admin))
         conn.commit()
         conn.close()
         return True
@@ -57,8 +59,9 @@ def create_user(username, password):
 def verify_user(username, password):
     conn = sqlite3.connect('poker_tracker.db')
     c = conn.cursor()
+    hashed_pw = hash_password(password)
     c.execute("SELECT id, is_admin FROM users WHERE username = ? AND password = ?",
-              (username, hash_password(password)))
+              (username, hashed_pw))
     result = c.fetchone()
     conn.close()
     return result if result else None
@@ -127,6 +130,12 @@ def get_user_stats(user_id):
         'win_rate': (winning_sessions / total_sessions * 100) if total_sessions > 0 else 0
     }
 
+def reset_database():
+    """Radera databasen och skapa en ny (använd försiktigt!)"""
+    if os.path.exists('poker_tracker.db'):
+        os.remove('poker_tracker.db')
+    init_db()
+
 # Initialisera databas
 init_db()
 
@@ -145,7 +154,7 @@ st.set_page_config(page_title="Poker Statistik Tracker", page_icon="🍆", layou
 if st.session_state.user_id is None:
     st.title("🍆 Poker Statistik Tracker")
     
-    tab1, tab2 = st.tabs(["Logga in", "Skapa konto"])
+    tab1, tab2, tab3 = st.tabs(["Logga in", "Skapa konto", "⚠️ Återställ databas"])
     
     with tab1:
         st.subheader("Logga in")
@@ -161,6 +170,7 @@ if st.session_state.user_id is None:
                 st.rerun()
             else:
                 st.error("Felaktigt användarnamn eller lösenord")
+                st.info("💡 Om du just har skapat kontot och inte kan logga in, kan det bero på ett databasfel. Försök återställa databasen under fliken 'Återställ databas'.")
     
     with tab2:
         st.subheader("Skapa nytt konto")
@@ -177,9 +187,22 @@ if st.session_state.user_id is None:
                 st.error("Lösenordet måste vara minst 4 tecken")
             else:
                 if create_user(new_username, new_password):
-                    st.success("Konto skapat! Du kan nu logga in.")
+                    st.success("✅ Konto skapat! Du kan nu logga in.")
                 else:
                     st.error("Användarnamnet är redan taget")
+    
+    with tab3:
+        st.subheader("⚠️ Återställ databas")
+        st.warning("**VARNING:** Detta raderar ALL data inklusive användare och sessioner. Detta kan inte ångras!")
+        st.write("Använd detta om du har problem med inloggning och vill börja om från början.")
+        
+        confirm_reset = st.checkbox("Jag förstår att all data kommer raderas")
+        
+        if confirm_reset:
+            if st.button("🗑️ RADERA ALLT OCH ÅTERSTÄLL DATABAS", type="primary"):
+                reset_database()
+                st.success("✅ Databasen har återställts! Du kan nu skapa ett nytt konto.")
+                st.info("Ladda om sidan (F5) för att fortsätta.")
 
 else:
     # Inloggad vy
@@ -196,123 +219,69 @@ else:
             st.session_state.is_admin = False
             st.rerun()
     
-    # Hämta sessioner
+    # Hämta användarens sessioner
     sessions_df = get_sessions(st.session_state.user_id)
     
-    # Tabs - lägg till Admin-panel om användaren är admin
+    # Skapa flikar
+    tabs = ["📊 Översikt", "➕ Lägg till session", "📋 Alla sessioner"]
     if st.session_state.is_admin:
-        tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "➕ Lägg till session", "📋 Alla sessioner", "👑 Admin Panel"])
-    else:
-        tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "➕ Lägg till session", "📋 Alla sessioner"])
+        tabs.append("👑 Admin")
+    
+    tab_objects = st.tabs(tabs)
+    tab1 = tab_objects[0]
+    tab2 = tab_objects[1]
+    tab3 = tab_objects[2]
+    if st.session_state.is_admin:
+        tab4 = tab_objects[3]
     
     with tab1:
+        st.subheader("Din statistik")
+        
         if len(sessions_df) == 0:
-            st.info("Du har inga pokersessioner än. Lägg till din första session i nästa flik!")
+            st.info("Du har inte lagt till några sessioner än. Gå till 'Lägg till session' för att komma igång!")
         else:
             # Beräkna statistik
-            total_profit = sessions_df['profit_loss'].sum()
-            total_sessions = len(sessions_df)
-            total_hours = sessions_df['duration_hours'].sum()
-            avg_profit_per_session = sessions_df['profit_loss'].mean()
-            avg_profit_per_hour = total_profit / total_hours if total_hours > 0 else 0
-            winning_sessions = len(sessions_df[sessions_df['profit_loss'] > 0])
-            losing_sessions = len(sessions_df[sessions_df['profit_loss'] < 0])
-            breakeven_sessions = len(sessions_df[sessions_df['profit_loss'] == 0])
-            win_rate = (winning_sessions / total_sessions * 100) if total_sessions > 0 else 0
-            best_session = sessions_df['profit_loss'].max()
-            worst_session = sessions_df['profit_loss'].min()
+            stats = get_user_stats(st.session_state.user_id)
             
-            # KPI:er
-            st.subheader("📈 Sammanfattning")
+            # Visa nyckeltal
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                st.metric("Total Vinst/Förlust", f"{total_profit:,.0f} kr", 
-                         delta=f"{avg_profit_per_session:,.0f} kr/session")
+                st.metric("Total vinst/förlust", f"{stats['total_profit']:,.0f} kr")
             with col2:
-                st.metric("Antal Sessioner", total_sessions,
-                         delta=f"{win_rate:.1f}% vinst")
+                st.metric("Antal sessioner", stats['total_sessions'])
             with col3:
-                st.metric("Total Speltid", f"{total_hours:.1f} h",
-                         delta=f"{avg_profit_per_hour:,.0f} kr/h")
+                st.metric("Total speltid", f"{stats['total_hours']:.1f} h")
             with col4:
-                st.metric("Bästa Session", f"{best_session:,.0f} kr",
-                         delta=f"Sämsta: {worst_session:,.0f} kr", delta_color="off")
+                st.metric("Vinst per timme", f"{stats['avg_profit_per_hour']:,.0f} kr/h")
             
             st.divider()
             
-            # Grafer
-            col1, col2 = st.columns(2)
+            # Ytterligare statistik
+            col1, col2, col3 = st.columns(3)
             
             with col1:
-                st.subheader("💰 Kumulativ Vinst/Förlust")
-                sessions_df['date'] = pd.to_datetime(sessions_df['date'])
-                sessions_df = sessions_df.sort_values('date')
-                sessions_df['cumulative'] = sessions_df['profit_loss'].cumsum()
+                st.write("**Per session**")
+                st.write(f"- Snitt vinst/förlust: {stats['avg_profit_per_session']:,.0f} kr")
+                st.write(f"- Vinst%: {stats['win_rate']:.1f}%")
+                best_session = sessions_df['profit_loss'].max()
+                worst_session = sessions_df['profit_loss'].min()
+                st.write(f"- Bästa session: {best_session:,.0f} kr")
+                st.write(f"- Sämsta session: {worst_session:,.0f} kr")
+            
+            with col2:
+                st.write("**Graf över tid**")
+                # Skapa kumulativ graf
+                sessions_df_sorted = sessions_df.sort_values('date')
+                sessions_df_sorted['date'] = pd.to_datetime(sessions_df_sorted['date'])
+                sessions_df_sorted['cumulative'] = sessions_df_sorted['profit_loss'].cumsum()
                 
-                fig = px.line(sessions_df, x='date', y='cumulative',
+                fig = px.line(sessions_df_sorted, x='date', y='cumulative',
                             labels={'cumulative': 'Kumulativ vinst (kr)', 'date': 'Datum'},
                             markers=True)
                 fig.add_hline(y=0, line_dash="dash", line_color="gray")
                 st.plotly_chart(fig, use_container_width=True)
             
-            with col2:
-                st.subheader("🎯 Sessionsresultat")
-                result_data = pd.DataFrame({
-                    'Resultat': ['Vinstsessioner', 'Förlustssessioner', 'Breakeven'],
-                    'Antal': [winning_sessions, losing_sessions, breakeven_sessions]
-                })
-                fig = px.pie(result_data, values='Antal', names='Resultat',
-                           color='Resultat',
-                           color_discrete_map={'Vinstsessioner': '#2ecc71', 
-                                              'Förlustssessioner': '#e74c3c',
-                                              'Breakeven': '#95a5a6'})
-                st.plotly_chart(fig, use_container_width=True)
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.subheader("📊 Vinst per session")
-                fig = px.bar(sessions_df.head(20), x='date', y='profit_loss',
-                           labels={'profit_loss': 'Vinst/Förlust (kr)', 'date': 'Datum'},
-                           color='profit_loss',
-                           color_continuous_scale=['red', 'yellow', 'green'],
-                           color_continuous_midpoint=0)
-                fig.add_hline(y=0, line_dash="dash", line_color="gray")
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                st.subheader("⏱️ Vinst per timme")
-                sessions_df['hourly_rate'] = sessions_df['profit_loss'] / sessions_df['duration_hours']
-                fig = px.bar(sessions_df.head(20), x='date', y='hourly_rate',
-                           labels={'hourly_rate': 'kr/timme', 'date': 'Datum'},
-                           color='hourly_rate',
-                           color_continuous_scale=['red', 'yellow', 'green'],
-                           color_continuous_midpoint=0)
-                fig.add_hline(y=0, line_dash="dash", line_color="gray")
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Detaljerad statistik
-            st.divider()
-            st.subheader("📉 Detaljerad Statistik")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.write("**Session Statistik**")
-                st.write(f"- Längsta session: {sessions_df['duration_hours'].max():.1f} h")
-                st.write(f"- Kortaste session: {sessions_df['duration_hours'].min():.1f} h")
-                st.write(f"- Genomsnittlig session: {sessions_df['duration_hours'].mean():.1f} h")
-                
-            with col2:
-                st.write("**Vinst/Förlust**")
-                st.write(f"- Median vinst: {sessions_df['profit_loss'].median():,.0f} kr")
-                st.write(f"- Standardavvikelse: {sessions_df['profit_loss'].std():,.0f} kr")
-                total_wins = sessions_df[sessions_df['profit_loss'] > 0]['profit_loss'].sum()
-                total_losses = abs(sessions_df[sessions_df['profit_loss'] < 0]['profit_loss'].sum())
-                st.write(f"- Totala vinster: {total_wins:,.0f} kr")
-                st.write(f"- Totala förluster: {total_losses:,.0f} kr")
-                
             with col3:
                 st.write("**Trender**")
                 last_5 = sessions_df.head(5)['profit_loss'].sum()
